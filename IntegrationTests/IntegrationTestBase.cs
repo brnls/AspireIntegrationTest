@@ -9,6 +9,7 @@ namespace IntegrationTests;
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     public IResourceBuilder<PostgresDatabaseResource> Postgresdb { get; }
+    private IResourceBuilder<WaitResource> InitResource { get; }
 
     private readonly DistributedApplication _app;
     private string _postgresConnectionString;
@@ -21,6 +22,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             AssemblyName = typeof(CustomWebApplicationFactory).Assembly.FullName
         });
         Postgresdb = appBuilder.AddAppDatabase();
+        InitResource = appBuilder.AddResource(new WaitResource("init"))
+            .WaitFor(Postgresdb);
+
         _app = appBuilder.Build();
     }
 
@@ -50,7 +54,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
     {
         var resourceNotifyService = _app.Services.GetRequiredService<ResourceNotificationService>();
         await _app.StartAsync(CancellationToken.None);
-        await resourceNotifyService.WaitForResourceHealthyAsync(Postgresdb.Resource.Name);
+        await resourceNotifyService.WaitForDependenciesAsync(InitResource.Resource, default);
         _postgresConnectionString = await Postgresdb.Resource.ConnectionStringExpression.GetValueAsync(CancellationToken.None);
     }
 
@@ -58,6 +62,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
     {
         await _app.DisposeAsync();
     }
+
+    private class WaitResource(string name) : Resource(name), IResourceWithWaitSupport { }
 }
 
 [CollectionDefinition("WebAppFactoryCollection")]
