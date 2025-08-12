@@ -1,11 +1,13 @@
 ﻿using Npgsql;
-
+using Projects;
 namespace AppHost;
 
-public static class PostgresExtensions
+public static class AppHostBuilder
 {
-    public static IResourceBuilder<PostgresDatabaseResource> AddAppDatabase(this IDistributedApplicationBuilder builder)
+    public static IDistributedApplicationBuilder CreateBuilder(DistributedApplicationOptions options)
     {
+        var builder = DistributedApplication.CreateBuilder(options);
+
         var postgres = builder.AddPostgres("postgres");
         postgres.WithPgAdmin();
         var postgresdb = postgres.AddDatabase("appdb");
@@ -24,6 +26,11 @@ public static class PostgresExtensions
                 INSERT INTO person (id, name) VALUES (2, 'Bob');
                 """).ExecuteNonQueryAsync(ct);
         });
-        return postgresdb;
+
+        builder.AddProject<App>("app")
+            .WithReference(postgresdb)
+            .WaitFor(postgresdb);
+
+        return builder;
     }
 }
