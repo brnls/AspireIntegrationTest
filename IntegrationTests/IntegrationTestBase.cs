@@ -1,32 +1,17 @@
 ﻿using AppHost;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace IntegrationTests;
 
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    public IResourceBuilder<PostgresDatabaseResource> Postgresdb { get; }
-    private IResourceBuilder<WaitResource> InitResource { get; }
+    public PostgresDatabaseResource Postgresdb { get; private set; }
 
-    private readonly DistributedApplication _app;
+    private DistributedApplication _app;
     private string _postgresConnectionString;
-
-    public CustomWebApplicationFactory()
-    {
-        var appBuilder = DistributedApplication.CreateBuilder(new DistributedApplicationOptions()
-        {
-            DisableDashboard = true,
-            AssemblyName = typeof(CustomWebApplicationFactory).Assembly.FullName
-        });
-        Postgresdb = appBuilder.AddAppDatabase();
-        InitResource = appBuilder.AddResource(new WaitResource("init"))
-            .WaitFor(Postgresdb);
-
-        _app = appBuilder.Build();
-    }
 
     protected override IHost CreateHost(IHostBuilder builder)
     {
@@ -34,7 +19,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         {
             config.AddInMemoryCollection(new Dictionary<string, string>
             {
-                { $"ConnectionStrings:{Postgresdb.Resource.Name}", _postgresConnectionString },
+                { $"ConnectionStrings:{Postgresdb.Name}", _postgresConnectionString },
             });
         });
 
@@ -52,10 +37,23 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
 
     public async Task InitializeAsync()
     {
-        var resourceNotifyService = _app.Services.GetRequiredService<ResourceNotificationService>();
+        var builder = AppHostBuilder.CreateBuilder(new DistributedApplicationOptions()
+        {
+            DisableDashboard = true,
+            AssemblyName = typeof(CustomWebApplicationFactory).Assembly.FullName
+        });
+
+        Postgresdb = builder.Resources.FirstOrDefault(x => x is PostgresDatabaseResource) as PostgresDatabaseResource;
+
+        var app = builder.Resources.FirstOrDefault(x => x.Name == "app");
+        builder.Resources.Remove(app);
+
+        _app = builder.Build();
+
         await _app.StartAsync(CancellationToken.None);
-        await resourceNotifyService.WaitForDependenciesAsync(InitResource.Resource, default);
-        _postgresConnectionString = await Postgresdb.Resource.ConnectionStringExpression.GetValueAsync(CancellationToken.None);
+        var resourceNotification = _app.Services.GetRequiredService<ResourceNotificationService>();
+        await resourceNotification.WaitForDependenciesAsync(app, default);
+        _postgresConnectionString = await Postgresdb.ConnectionStringExpression.GetValueAsync(CancellationToken.None);
     }
 
     async Task IAsyncLifetime.DisposeAsync()
@@ -63,7 +61,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         await _app.DisposeAsync();
     }
 
-    private class WaitResource(string name) : Resource(name), IResourceWithWaitSupport { }
 }
 
 [CollectionDefinition("WebAppFactoryCollection")]
